@@ -16,3 +16,7 @@ android/captures/
 *.jks
 *.keystore
 .DS_Store
+
+# Firebase (optional, per-developer)
+android/app/google-services.json
+android/.kotlin/

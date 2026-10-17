@@ -3,7 +3,7 @@ export const LIMITS = Object.freeze({ maxSamples: 500, maxTransitions: 20 });
 
 const bad = (message) => Object.assign(new Error(message), { status: 400 });
 const num = (v) => typeof v === 'number' && Number.isFinite(v);
-const DEVICE_RE = /^[A-Za-z0-9._-]{1,64}$/;
+export const DEVICE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const ACTIVITIES = ['IN_VEHICLE', 'ON_BICYCLE', 'ON_FOOT', 'RUNNING', 'STILL', 'TILTING', 'WALKING', 'UNKNOWN'];
 
 function stats(s, where) {

@@ -23,7 +23,27 @@
 </header>
 <main>
   <div id="map" aria-label="map of recent points"></div>
-  <aside id="latest"><p class="muted">Enter the view key to load data.</p></aside>
+  <aside>
+    <div id="latest"><p class="muted">Enter the view key to load data.</p></div>
+    <section id="control" hidden>
+      <h2>Control</h2>
+      <div class="row">
+        <button type="button" data-cmd="start">Start</button>
+        <button type="button" data-cmd="stop">Stop</button>
+        <button type="button" data-cmd="ping">Ping</button>
+      </div>
+      <form id="taskform">
+        <input id="goal" maxlength="500" placeholder="Ask: where is the phone?" aria-label="task goal" autocomplete="off">
+        <button>Run</button>
+      </form>
+      <p id="features" class="muted small"></p>
+      <pre id="transcript" hidden></pre>
+      <h3>Commands</h3>
+      <ul id="commands" class="list"></ul>
+      <h3>Audit <button type="button" id="verify" class="small">verify chain</button></h3>
+      <ul id="audit" class="list"></ul>
+    </section>
+  </aside>
 </main>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script src="/app.js"></script>

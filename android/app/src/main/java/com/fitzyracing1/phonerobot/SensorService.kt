@@ -56,6 +56,7 @@ class SensorService : Service(), SensorEventListener {
     companion object {
         const val ACTION_START = "com.fitzyracing1.phonerobot.START"
         const val ACTION_STOP = "com.fitzyracing1.phonerobot.STOP"
+        const val ACTION_POLL = "com.fitzyracing1.phonerobot.POLL"
         const val TICK_MS = 10_000L
         private const val CHANNEL = "logging"
         private const val NOTIF_ID = 1
@@ -65,6 +66,8 @@ class SensorService : Service(), SensorEventListener {
 
         fun start(context: Context) = ContextCompat.startForegroundService(context, Intent(context, SensorService::class.java).setAction(ACTION_START))
         fun stop(context: Context) = context.startService(Intent(context, SensorService::class.java).setAction(ACTION_STOP))
+        private const val PAUSED_INTERVAL_MS = 60_000L
+        private const val MSG_CHANNEL = "messages"
     }
 
     private lateinit var settings: Settings
@@ -84,6 +87,14 @@ class SensorService : Service(), SensorEventListener {
     private var transitionsPending: PendingIntent? = null
     private var netCallback: ConnectivityManager.NetworkCallback? = null
     private var samples = 0
+    private lateinit var commandClient: CommandClient
+    private val seen = SeenIds()
+    private val pendingAcks = mutableListOf<Ack>()
+    private var lastPollElapsed = 0L
+    private var pollEveryMs = 60_000L
+    private var paused = false
+    private var notifId = 100
+    private var lastAppliedPaused: Boolean? = null
 
     private val tick = object : Runnable {
         override fun run() {
@@ -104,7 +115,7 @@ class SensorService : Service(), SensorEventListener {
                     l.time,
                 )
             }
-            maybeSample()
+            if (paused) maybePoll() else maybeSample()
         }
     }
 
@@ -119,12 +130,19 @@ class SensorService : Service(), SensorEventListener {
         uploader = Uploader(queue, settings, worker)
         fused = LocationServices.getFusedLocationProviderClient(this)
         sensors = getSystemService(SENSOR_SERVICE) as SensorManager
+        commandClient = CommandClient(settings)
+        seen.restore(settings.seenCommands)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             shutdown()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_POLL) {
+            // FCM nudge while running: fetch commands now. If we weren't running, there's nothing to poll with.
+            if (started) worker.post { pollCommands(force = true) } else stopSelf()
+            return if (started) START_STICKY else START_NOT_STICKY
         }
         if (!hasFineOrCoarse()) {
             Log.w(TAG, "no location permission; not starting")
@@ -142,7 +160,7 @@ class SensorService : Service(), SensorEventListener {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (!started) begin()
+        if (!started) begin() else if (paused) worker.post { resume("started from the app") }
         // If Android kills the process, restart it; with "all the time" location it can resume logging.
         return START_STICKY
     }
@@ -152,6 +170,8 @@ class SensorService : Service(), SensorEventListener {
         settings.running = true
         settings.putStatus("service", "running since " + DateFormat.getTimeInstance().format(Date()))
         ActivityState.listener = { worker.post { applyLocationPriority() } }
+        paused = false
+        settings.paused = false
         applyLocationPriority()
         startTransitions()
         startSensors()
@@ -159,6 +179,134 @@ class SensorService : Service(), SensorEventListener {
         lastTickElapsed = SystemClock.elapsedRealtime()
         worker.postDelayed(tick, TICK_MS)
         uploader.kick()
+        worker.post { pollCommands(force = true) }
+        registerFcmToken()
+    }
+
+    // ---------- milestone 2: remote commands ----------
+
+    /** Poll at most every pollSeconds (server-suggested, 60 s) unless forced (FCM nudge, start-up). */
+    private fun maybePoll() {
+        if (SystemClock.elapsedRealtime() - lastPollElapsed >= pollEveryMs - 1_000) pollCommands(force = false)
+    }
+
+    private fun pollCommands(force: Boolean) {
+        if (!started || !settings.configured) return
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastPollElapsed < 15_000) return
+        lastPollElapsed = now
+        try {
+            if (pendingAcks.isNotEmpty() && commandClient.ack(pendingAcks.toList())) pendingAcks.clear()
+            val poll = commandClient.poll() ?: run { settings.putStatus("commands", "server has no /commands (milestone 1 server)"); return }
+            pollEveryMs = poll.pollSeconds * 1000L
+            val acks = mutableListOf<Ack>()
+            for (c in poll.commands) {
+                if (!seen.firstTime(c.id)) { acks.add(Ack(c.id, true)); continue } // already handled; the earlier ack was lost
+                acks.add(handle(c))
+            }
+            settings.seenCommands = seen.snapshot()
+            if (acks.isNotEmpty() && !commandClient.ack(acks)) pendingAcks.addAll(acks)
+            settings.putStatus("commands", "polled " + DateFormat.getTimeInstance().format(Date()) + if (poll.commands.isNotEmpty()) " (${poll.commands.size} handled)" else "")
+        } catch (e: Exception) {
+            settings.putStatus("commands", "poll failed: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun handle(c: Command): Ack = when (c.type) {
+        "start" -> { resume("remote start"); Ack(c.id, true, org.json.JSONObject().put("state", "logging")) }
+        "stop" -> { pause(c.args["reason"] ?: "remote stop"); Ack(c.id, true, org.json.JSONObject().put("state", "paused")) }
+        "ping" -> Ack(c.id, true, statusJson())
+        "notify" -> {
+            val shown = showMessage(c.args["title"] ?: "phone-robot", c.args["body"] ?: "")
+            Ack(c.id, shown, org.json.JSONObject().put("shown", shown).apply { if (!shown) put("error", "notifications not allowed") })
+        }
+        else -> Ack(c.id, false, org.json.JSONObject().put("error", "unknown command"))
+    }
+
+    private fun statusJson(): org.json.JSONObject {
+        val bm = getSystemService(BATTERY_SERVICE) as BatteryManager
+        return org.json.JSONObject()
+            .put("state", if (paused) "paused" else "logging")
+            .put("battery", bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY))
+            .put("charging", bm.isCharging)
+            .put("queued", queue.size())
+            .put("fixAgeS", lastFix?.let { (System.currentTimeMillis() - it.t) / 1000 } ?: -1)
+            .put("activity", ActivityState.current ?: "UNKNOWN")
+            .put("app", BuildConfig.VERSION_NAME)
+            .put("fcm", BuildConfig.FCM_ENABLED)
+    }
+
+    /** Remote stop: no samples, no motion sensors, location at low power every 60 s just to stay reachable. */
+    @SuppressLint("MissingPermission")
+    private fun pause(reason: String) {
+        if (paused) return
+        paused = true
+        settings.paused = true
+        worker.removeCallbacks(tick)
+        sensors.unregisterListener(this)
+        accel.drain(); gyro.drain()
+        queue.seal()
+        uploader.kick(force = true)
+        if (hasFineOrCoarse()) {
+            fused.removeLocationUpdates(locationCallback)
+            val req = LocationRequest.Builder(Priority.PRIORITY_LOW_POWER, PAUSED_INTERVAL_MS).setMinUpdateIntervalMillis(PAUSED_INTERVAL_MS / 2).build()
+            fused.requestLocationUpdates(req, locationCallback, thread.looper)
+            highAccuracy = null
+        }
+        settings.putStatus("service", "paused remotely: ${reason.take(80)}")
+        updateNotification()
+    }
+
+    private fun resume(reason: String) {
+        if (!paused) return
+        paused = false
+        settings.paused = false
+        applyLocationPriority()
+        startSensors()
+        lastTickElapsed = SystemClock.elapsedRealtime()
+        worker.removeCallbacks(tick)
+        worker.postDelayed(tick, TICK_MS)
+        settings.putStatus("service", "running ($reason) since " + DateFormat.getTimeInstance().format(Date()))
+        updateNotification()
+    }
+
+    private fun showMessage(title: String, body: String): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(MSG_CHANNEL) == null) {
+            nm.createNotificationChannel(NotificationChannel(MSG_CHANNEL, getString(R.string.msg_channel_name), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = getString(R.string.msg_channel_desc)
+            })
+        }
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        nm.notify(notifId++, NotificationCompat.Builder(this, MSG_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_robot)
+            .setContentTitle(title.take(60))
+            .setContentText(body.take(240))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body.take(240)))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+            .build())
+        if (notifId > 150) notifId = 100
+        return true
+    }
+
+    private fun updateNotification() {
+        if (lastAppliedPaused == paused) return
+        lastAppliedPaused = paused
+        (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIF_ID, notification())
+    }
+
+    private fun registerFcmToken() {
+        if (!BuildConfig.FCM_ENABLED) return
+        try {
+            if (com.google.firebase.FirebaseApp.getApps(this).isEmpty()) return
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnSuccessListener { t ->
+                worker.post { try { settings.putStatus("fcm", if (commandClient.registerFcm(t)) "registered" else "register failed") } catch (e: Exception) { settings.putStatus("fcm", "register failed: ${e.javaClass.simpleName}") } }
+            }
+        } catch (e: Exception) {
+            settings.putStatus("fcm", "unavailable: ${e.javaClass.simpleName}")
+        }
     }
 
     private fun hasFineOrCoarse() =
@@ -231,7 +379,7 @@ class SensorService : Service(), SensorEventListener {
 
     /** Write a sample if ~10 s have passed (called from the Handler tick and from each location callback). */
     private fun maybeSample() {
-        if (!started) return
+        if (!started || paused) return
         val now = SystemClock.elapsedRealtime()
         if (now - lastTickElapsed < TICK_MS - 1_000) return
         lastTickElapsed = now
@@ -244,7 +392,10 @@ class SensorService : Service(), SensorEventListener {
         samples++
         settings.putStatus("lastSample", DateFormat.getTimeInstance().format(Date()) + (if (fix == null) " (no fix yet)" else ""))
         settings.putStatus("queued", queue.size().toString())
-        if (sealed) uploader.kick()
+        if (sealed) {
+            uploader.kick()
+            worker.post { pollCommands(force = false) } // commands ride the upload cycle (about once a minute)
+        }
     }
 
     private fun shutdown() {
@@ -260,6 +411,8 @@ class SensorService : Service(), SensorEventListener {
             netCallback?.let { (getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager).unregisterNetworkCallback(it) }
             ActivityState.listener = null
             ActivityState.reset()
+            paused = false
+            settings.paused = false
             queue.seal()
             uploader.kick(force = true) // one last attempt; the queue persists if it fails
         }
@@ -288,8 +441,8 @@ class SensorService : Service(), SensorEventListener {
         val stop = PendingIntent.getService(this, 1, Intent(this, SensorService::class.java).setAction(ACTION_STOP), PendingIntent.FLAG_IMMUTABLE)
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_robot)
-            .setContentTitle(getString(R.string.notif_title))
-            .setContentText("Every 10 s → ${Settings(this).serverUrl.removePrefix("https://")}")
+            .setContentTitle(getString(if (paused) R.string.notif_paused else R.string.notif_title))
+            .setContentText(if (paused) getString(R.string.notif_paused_text) else "Every 10 s → ${Settings(this).serverUrl.removePrefix("https://")}")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

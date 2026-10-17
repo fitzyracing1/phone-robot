@@ -48,6 +48,15 @@
             android:exported="false"
             android:foregroundServiceType="location" />
 
+        <!-- Optional FCM wake-ups (inactive unless built with google-services.json). -->
+        <service
+            android:name=".MessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".ActivityTransitionReceiver"
             android:exported="false" />

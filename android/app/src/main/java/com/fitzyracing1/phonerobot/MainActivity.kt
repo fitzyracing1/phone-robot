@@ -165,6 +165,8 @@ class MainActivity : ComponentActivity() {
             appendLine("location:    ${settings.status("location").ifEmpty { "—" }}")
             appendLine("activity:    ${settings.status("activity").ifEmpty { "—" }}  now=${ActivityState.current ?: "?"}")
             appendLine("motion:      ${settings.status("motion").ifEmpty { "—" }}")
+            appendLine("commands:    ${settings.status("commands").ifEmpty { "—" }}${if (settings.paused) "  [PAUSED remotely]" else ""}")
+            appendLine("push (FCM):  ${if (BuildConfig.FCM_ENABLED) settings.status("fcm").ifEmpty { "enabled" } else "not built in (polling only)"}")
             appendLine()
             perms.forEach { appendLine(it) }
         }

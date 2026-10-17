@@ -20,6 +20,15 @@ class Settings(context: Context) {
         get() = prefs.getString("device", null) ?: defaultDevice()
         set(v) = prefs.edit().putString("device", cleanDevice(v)).apply()
 
+    /** Logging paused by a remote "stop": the service stays up (low power) so it can still receive "start". */
+    var paused: Boolean
+        get() = prefs.getBoolean("paused", false)
+        set(v) = prefs.edit().putBoolean("paused", v).apply()
+
+    var seenCommands: List<String>
+        get() = (prefs.getString("seenCommands", "") ?: "").split(',').filter { it.isNotBlank() }
+        set(v) = prefs.edit().putString("seenCommands", v.takeLast(200).joinToString(",")).apply()
+
     var running: Boolean
         get() = prefs.getBoolean("running", false)
         set(v) = prefs.edit().putBoolean("running", v).apply()

@@ -2,8 +2,6 @@ package com.fitzyracing1.phonerobot
 
 import android.os.Handler
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.DateFormat
 import java.util.Date
 
@@ -57,26 +55,6 @@ class Uploader(private val queue: SampleQueue, private val settings: Settings, p
         if (queue.size() > 0) kick()
     }
 
-    private fun post(body: ByteArray): Int {
-        val conn = URL(settings.ingestUrl).openConnection() as HttpURLConnection
-        try {
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 20_000
-            conn.doOutput = true
-            conn.instanceFollowRedirects = false
-            conn.setRequestProperty("content-type", "application/json")
-            conn.setRequestProperty("authorization", "Bearer ${settings.token}")
-            conn.setRequestProperty("user-agent", "phone-robot/${BuildConfigCompat.VERSION} (+https://github.com/fitzyracing1/phone-robot)")
-            conn.setFixedLengthStreamingMode(body.size)
-            conn.outputStream.use { it.write(body) }
-            val code = conn.responseCode
-            (if (code >= 400) conn.errorStream else conn.inputStream)?.use { it.readBytes() }
-            return code
-        } finally {
-            conn.disconnect()
-        }
-    }
+    private fun post(body: ByteArray): Int = Http.request("POST", settings.ingestUrl, settings.token, body).code
 }
 
-object BuildConfigCompat { const val VERSION = "0.1.0" }
