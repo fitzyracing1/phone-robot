@@ -47,7 +47,7 @@ The page loads Leaflet 1.9.4 from unpkg (pinned with SRI) and map tiles from Ope
 
 **Railway** (not deployed yet):
 1. Create a new project from this repo and set the service's root directory to `server`. `railway.json` builds the Dockerfile and health-checks `/healthz`.
-2. Add a volume mounted at `/data`.
+2. Add a volume mounted at `/data`, and set `RAILWAY_RUN_UID=0` (Railway volumes are root-owned; the image otherwise runs as `node`).
 3. Set `INGEST_TOKEN` (and `VIEW_TOKEN`) as variables.
 4. Generate a domain. The app needs that `https://` URL.
 
