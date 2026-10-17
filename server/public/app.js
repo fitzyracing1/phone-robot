@@ -17,15 +17,62 @@
   const ago = (t) => { const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`; };
   const fmt = (v, d = 1) => (typeof v === 'number' ? v.toFixed(d) : '—');
 
-  async function api(path) {
-    const r = await fetch(path, { headers: { authorization: `Bearer ${key}` }, cache: 'no-store' });
+  async function api(path, body) {
+    const init = { headers: { authorization: `Bearer ${key}` }, cache: 'no-store' };
+    if (body !== undefined) { init.method = 'POST'; init.headers['content-type'] = 'application/json'; init.body = JSON.stringify(body); }
+    const r = await fetch(path, init);
     if (r.status === 401) throw Object.assign(new Error('wrong view key'), { auth: true });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return r.json();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    return j;
   }
+
+  const fmtTime = (t) => new Date(t).toLocaleTimeString();
+  async function refreshControl() {
+    const dev = $('device').value;
+    const q = dev ? `device=${encodeURIComponent(dev)}` : '';
+    const [cmds, audit, features] = await Promise.all([api(`/api/commands?${q}`), api('/audit?limit=15'), api('/api/features')]);
+    $('control').hidden = false;
+    $('features').textContent = `planner: ${features.planner} · max ${features.maxTurns} turns · push: ${features.fcm ? 'FCM + polling' : 'polling'}` +
+      (cmds.lastPollAt ? ` · phone last polled ${ago(cmds.lastPollAt)}` : '');
+    $('commands').innerHTML = cmds.commands.slice().reverse().slice(0, 8).map((c) =>
+      `<li>${esc(fmtTime(c.createdAt))} <b>${esc(c.type)}</b> → ${esc(c.device)} · <span class="${c.status === 'acked' ? 'ok' : 'muted'}">${esc(c.status)}</span>` +
+      `${c.result ? ` <span class="muted">${esc(JSON.stringify(c.result).slice(0, 80))}</span>` : ''}</li>`).join('') || '<li class="muted">none yet</li>';
+    $('audit').innerHTML = audit.entries.slice().reverse().map((e) =>
+      `<li>#${e.seq} ${esc(new Date(e.at).toLocaleTimeString())} <b>${esc(e.kind)}</b> ${esc([e.tool, e.type, e.verdict, e.provider, e.reason || e.detail || e.summary].filter(Boolean).join(' · ').slice(0, 120))}</li>`).join('');
+  }
+
+  function showTranscript(t) {
+    const lines = [`goal: ${t.goal}`, `planner: ${t.planner}`];
+    for (const x of t.turns) lines.push(`${x.n}. ${x.tool}(${JSON.stringify(x.args)}) → ${x.verdict}${x.reason ? `: ${x.reason}` : x.result ? ` ${JSON.stringify(x.result).slice(0, 140)}` : ''}`);
+    lines.push(`end (${t.endedBy}): ${t.summary}`);
+    $('transcript').textContent = lines.join('\n');
+    $('transcript').hidden = false;
+  }
+
+  document.querySelectorAll('[data-cmd]').forEach((b) => b.addEventListener('click', async () => {
+    const dev = $('device').value;
+    try { const r = await api('/commands', { type: b.dataset.cmd, ...(dev ? { device: dev } : {}) }); $('transcript').textContent = `${r.command.type} queued for ${r.command.device} via ${r.via}`; $('transcript').hidden = false; }
+    catch (e) { $('transcript').textContent = `error: ${e.message}`; $('transcript').hidden = false; }
+    refreshControl().catch(() => {});
+  }));
+  $('taskform').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const goal = $('goal').value.trim();
+    if (!goal) return;
+    const dev = $('device').value;
+    try { showTranscript(await api('/tasks', { goal, ...(dev ? { device: dev } : {}) })); }
+    catch (err) { $('transcript').textContent = `error: ${err.message}`; $('transcript').hidden = false; }
+    refreshControl().catch(() => {});
+  });
+  $('verify').addEventListener('click', async () => {
+    try { const r = await api('/audit?limit=1&verify=1'); $('verify').textContent = r.chain.ok ? `chain ok (${r.chain.entries})` : `BROKEN at #${r.chain.brokenAt}`; }
+    catch (e) { $('verify').textContent = e.message; }
+  });
 
   function showKeyForm(msg) {
     $('keyform').hidden = false; $('forget').hidden = true;
+    $('control').hidden = true;
     $('latest').innerHTML = `<p class="${msg ? 'err' : 'muted'}">${esc(msg || 'Enter the view key to load data.')}</p>`;
   }
 
@@ -53,6 +100,7 @@
       const q = dev ? `device=${encodeURIComponent(dev)}&` : '';
       const [latest, track] = await Promise.all([api(`/api/latest?${q}`), api(`/api/track?${q}minutes=${$('minutes').value}`)]);
       $('keyform').hidden = true; $('forget').hidden = false;
+      refreshControl().catch((err) => { $('features').textContent = `control unavailable: ${err.message}`; });
       const sel = $('device');
       const opts = ['', ...latest.devices];
       if (sel.options.length !== opts.length) sel.innerHTML = opts.map((d) => `<option value="${esc(d)}">${d ? esc(d) : 'all'}</option>`).join('');

@@ -13,8 +13,12 @@
     <string name="channel_desc">Shown while phone-robot logs location and motion.</string>
     <string name="notif_title">Logging location and motion</string>
     <string name="notif_stop">Stop</string>
-    <string name="intro">Every 10 seconds this app records your location, activity (still, walking, driving) and a motion summary, and uploads them in batches to your own server. Nothing is sent anywhere else. No calls or texts.</string>
+    <string name="intro">Every 10 seconds this app records your location, activity (still, walking, driving) and a motion summary, and uploads them in batches to your own server. Nothing is sent anywhere else. No calls or texts. Your server can pause, resume, ping and notify this phone.</string>
     <string name="hint_url">https://your-server.up.railway.app</string>
     <string name="hint_token">INGEST_TOKEN from the server</string>
     <string name="hint_device">pixel-8</string>
+    <string name="notif_paused">Logging paused</string>
+    <string name="notif_paused_text">Paused remotely. Waiting for a start command.</string>
+    <string name="msg_channel_name">Messages from your server</string>
+    <string name="msg_channel_desc">Notifications your phone-robot server sends (e.g. answers to tasks).</string>
 </resources>
