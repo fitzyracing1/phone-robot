@@ -13,8 +13,9 @@ jobs:
   server:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node: [18, 20, 22]
+        node: [18, 20, 22, 24]
     defaults:
       run:
         working-directory: server
