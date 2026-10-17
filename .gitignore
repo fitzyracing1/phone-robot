@@ -1,0 +1,18 @@
+# server
+server/data/
+*.ndjson
+node_modules/
+.env
+# android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+.DS_Store

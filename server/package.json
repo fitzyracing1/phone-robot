@@ -1,0 +1,11 @@
+{
+  "name": "phone-robot-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Receives sensor batches from the phone-robot Android app, stores them as NDJSON and shows the latest point and recent track.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "bin": { "phone-robot-server": "./server.mjs" },
+  "scripts": { "start": "node server.mjs", "test": "node --test test/" }
+}

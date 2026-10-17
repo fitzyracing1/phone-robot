@@ -1,0 +1,17 @@
+{
+  "title": "phone-robot",
+  "defaults": { "intervalSeconds": 60, "timeoutMs": 10000, "maxLatencyMs": 5000, "failThreshold": 2, "recoverThreshold": 1 },
+  "targets": [
+    {
+      "name": "phone-robot-server",
+      "type": "http",
+      "url": "${PHONE_ROBOT_URL}/healthz",
+      "expectStatus": 200,
+      "keyword": "\"ok\":true"
+    }
+  ],
+  "alerts": [
+    { "type": "discord", "url": "${DISCORD_WEBHOOK_URL}" },
+    { "type": "slack", "url": "${SLACK_WEBHOOK_URL}", "on": ["dark"] }
+  ]
+}
