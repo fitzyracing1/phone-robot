@@ -101,6 +101,50 @@ test('samples without a fix are stored but left off the map track; old points fa
   assert.equal(track.count, 0);
 });
 
+test('GET /api/recent returns every sample in the window, fix or not, oldest first, in the ingest format', async () => {
+  const r = await (await get('/api/recent?device=pixel-8&minutes=60')).json();
+  assert.equal(r.minutes, 60);
+  assert.equal(r.count, 7, '6 walking samples with a fix + 1 STILL sample without one');
+  assert.equal(r.samples.length, r.count);
+  assert.ok(r.samples.every((s, i) => i === 0 || s.t >= r.samples[i - 1].t), 'sorted by t');
+  assert.equal(r.samples.at(-1).activity, 'STILL');
+  assert.equal(r.samples.at(-1).loc, undefined);
+  const first = r.samples[0];
+  assert.equal(first.device, 'pixel-8');
+  assert.deepEqual(first.motion, sample(0).motion);
+  assert.deepEqual(Object.keys(first).sort(), ['activity', 'battery', 'charging', 'device', 'loc', 'motion', 't', 'transitions', 'receivedAt'].sort());
+});
+
+test('GET /api/recent: limit keeps the newest, window and device filter, bounds and auth', async () => {
+  const two = await (await get('/api/recent?limit=2')).json();
+  assert.equal(two.count, 2);
+  assert.equal(two.samples.at(-1).activity, 'STILL');
+  assert.equal(two.samples[0].t, sample(5).t);
+  assert.equal((await (await get('/api/recent?minutes=1')).json()).count, 1, 'only the STILL sample is under a minute old');
+  assert.equal((await (await get('/api/recent?device=other')).json()).count, 0);
+  const clamped = await (await get('/api/recent?minutes=999999&limit=-5')).json();
+  assert.equal(clamped.minutes, 7 * 24 * 60);
+  assert.equal(clamped.count, 1, 'limit is clamped to at least 1');
+  const junk = await (await get('/api/recent?minutes=abc&limit=abc')).json();
+  assert.equal(junk.minutes, 60);
+  assert.equal((await get('/api/recent', '')).status, 401);
+  assert.equal((await get('/api/recent', TOKEN)).status, 401);
+  const post405 = await fetch(`${base}/api/recent`, { method: 'POST', headers: { authorization: `Bearer ${VIEW}` } });
+  assert.equal(post405.status, 405);
+});
+
+test('Store.samples includes fix-less samples; Store.track does not', () => {
+  const d = mkdtempSync(join(tmpdir(), 'pr-samples-'));
+  const s = new Store(d);
+  const now = Date.now();
+  s.append('p', [{ t: now - 20_000, loc: { lat: 1, lon: 2 } }, { t: now - 10_000, activity: 'STILL' }, { t: now - 2 * 3600_000, activity: 'WALKING' }]);
+  assert.equal(s.samples({ minutes: 60, now }).length, 2);
+  assert.equal(s.track({ minutes: 60, now }).length, 1);
+  assert.equal(s.samples({ minutes: 180, now })[0].activity, 'WALKING');
+  assert.equal(s.samples({ minutes: 60, limit: 1, now })[0].activity, 'STILL');
+  rmSync(d, { recursive: true, force: true });
+});
+
 test('validation rejects bad batches with 400 and a reason', async () => {
   const cases = [
     [{ samples: [sample(0)] }, /device/],
@@ -141,7 +185,10 @@ test('page and assets are served with a strict CSP and no data inline', async ()
   assert.match(html, /leaflet@1\.9\.4/);
   assert.match(html, /integrity="sha256-/);
   assert.doesNotMatch(html, /40\.71/);
-  assert.equal((await fetch(`${base}/app.js`)).status, 200);
+  assert.match(html, /id="motion"/);
+  assert.match(html, /id="status"/);
+  const js = await (await fetch(`${base}/app.js`)).text();
+  assert.match(js, /\/api\/recent\?/);
   assert.equal((await fetch(`${base}/style.css`)).status, 200);
 });
 
@@ -168,4 +215,27 @@ test('server.mjs refuses to start with a short INGEST_TOKEN', async () => {
     p.on('exit', resolve);
   });
   assert.equal(code, 1);
+});
+
+test('server.mjs listens on $PORT and serves /healthz (what Docker and Railway rely on)', async () => {
+  const { spawn } = await import('node:child_process');
+  const { createServer } = await import('node:net');
+  const port = await new Promise((resolve) => { const s = createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+  const data = mkdtempSync(join(tmpdir(), 'pr-port-'));
+  const p = spawn(process.execPath, [new URL('../server.mjs', import.meta.url).pathname], { env: { ...process.env, INGEST_TOKEN: TOKEN, PORT: String(port), DATA_DIR: data }, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('server did not start')), 10_000);
+      p.stdout.on('data', (b) => { if (String(b).includes(`on :${port}`)) { clearTimeout(t); resolve(); } });
+      p.on('exit', (c) => { clearTimeout(t); reject(new Error(`exited ${c}`)); });
+    });
+    const r = await fetch(`http://127.0.0.1:${port}/healthz`);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).ok, true);
+  } finally {
+    const exited = new Promise((r) => p.once('exit', r));
+    p.kill('SIGTERM');
+    await exited;
+    rmSync(data, { recursive: true, force: true });
+  }
 });

@@ -4,6 +4,7 @@
 //   GET  /              map page shell (no data in it; the page asks for the view key)
 //   GET  /api/latest    Authorization: Bearer <VIEW_TOKEN>  ?device=
 //   GET  /api/track     Authorization: Bearer <VIEW_TOKEN>  ?device=&minutes=60&limit=2000
+//   GET  /api/recent    Authorization: Bearer <VIEW_TOKEN>  ?device=&minutes=60&limit=360  (all samples, fix or not)
 // Milestone 2 (all additive; the milestone-1 app keeps working unchanged):
 //   device token (INGEST_TOKEN):  GET /commands?device=   POST /commands/ack   POST /devices/fcm
 //   owner token (VIEW_TOKEN):     POST /commands {device?, type: start|stop|ping}   GET /api/commands
@@ -213,6 +214,12 @@ export function createHandler({
           const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get('limit')) || 2000));
           const points = store.track({ device: dev, minutes, limit, now: now() });
           return send(res, 200, { minutes, count: points.length, points });
+        }
+        if (path === '/api/recent') {
+          const minutes = Math.min(7 * 24 * 60, Math.max(1, Number(url.searchParams.get('minutes')) || 60));
+          const limit = Math.min(5000, Math.max(1, Number(url.searchParams.get('limit')) || 360));
+          const samples = store.samples({ device: dev, minutes, limit, now: now() });
+          return send(res, 200, { minutes, count: samples.length, samples });
         }
         return send(res, 404, { error: 'not found' });
       }
