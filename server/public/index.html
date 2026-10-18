@@ -20,11 +20,20 @@
     <option value="15">15 min</option><option value="60" selected>1 h</option><option value="360">6 h</option><option value="1440">24 h</option>
   </select></label>
   <button id="forget" type="button" hidden>Forget key</button>
+  <span id="status" class="badge" hidden></span>
 </header>
 <main>
   <div id="map" aria-label="map of recent points"></div>
   <aside>
     <div id="latest"><p class="muted">Enter the view key to load data.</p></div>
+    <section id="motion" hidden>
+      <h2>Motion <span id="motion-span" class="muted small"></span></h2>
+      <div class="chart"><div class="chart-label">accel rms <b id="accel-now"></b></div><svg id="accel-chart" viewBox="0 0 300 48" preserveAspectRatio="none" role="img" aria-label="accelerometer rms over the window"></svg></div>
+      <div class="chart"><div class="chart-label">gyro rms <b id="gyro-now"></b></div><svg id="gyro-chart" viewBox="0 0 300 48" preserveAspectRatio="none" role="img" aria-label="gyroscope rms over the window"></svg></div>
+      <div class="chart"><div class="chart-label">speed <b id="speed-now"></b></div><svg id="speed-chart" viewBox="0 0 300 48" preserveAspectRatio="none" role="img" aria-label="speed over the window"></svg></div>
+      <div class="chart"><div class="chart-label">activity</div><svg id="activity-strip" viewBox="0 0 300 10" preserveAspectRatio="none" role="img" aria-label="activity over the window"></svg></div>
+      <p id="activity-legend" class="legend small"></p>
+    </section>
     <section id="control" hidden>
       <h2>Control</h2>
       <div class="row">

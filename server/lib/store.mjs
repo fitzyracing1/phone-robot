@@ -62,4 +62,11 @@ export class Store {
     const pts = this.recent.filter((r) => r.loc && r.t >= since && (!device || r.device === device));
     return pts.slice(-limit);
   }
+
+  /** Every recent sample in the window, with or without a fix (motion, activity, battery history). */
+  samples({ device, minutes = 60, limit = 360, now = Date.now() } = {}) {
+    const since = now - minutes * 60_000;
+    const out = this.recent.filter((r) => r.t >= since && (!device || r.device === device));
+    return out.slice(-limit);
+  }
 }

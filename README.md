@@ -4,12 +4,12 @@
 
 **Milestones 1 and 2 of the phone-robot plan.** An Android phone logs its GPS position, activity (still, walking, driving)
 and a motion summary every 10 seconds and streams them to your own small server, which stores everything and shows
-the latest point and recent track on a map. **Milestone 2** adds remote start/stop/ping, a small task planner
+the latest point, the recent track and the motion history on a live dashboard. **Milestone 2** adds remote start/stop/ping, a small task planner
 with three tools, a code-level safety layer, an append-only audit log and a DIS dependency gate (see below).
 There are still no calls and no SMS.
 
 ![server page (demo data)](docs/server-page.png)
-*The server page with demo data: a walk, then a short drive.*
+*The server page with demo data: a walk through Central Park, a short stop, then a drive. It refreshes every 10 s.*
 
 ```
 android/   Kotlin app (minSdk 26, targetSdk 35): settings screen + foreground service → batches → POST /ingest
@@ -41,11 +41,16 @@ npm test
 | `POST /ingest` | `Authorization: Bearer $INGEST_TOKEN` | body `{device, samples:[{t, loc?, activity?, transitions?, motion?, battery?, charging?}]}`, max 500 samples / 1 MB. The server validates it and drops unknown fields. |
 | `GET /healthz` | none | `{ok, points, uptimeS}`. Contains no location data. |
 | `GET /` | none (shell only) | the map page. Open `https://<server>/#key=<VIEW_TOKEN>`: the key stays in the URL fragment, so it never reaches server logs, and is saved in the browser. |
-| `GET /api/latest`, `GET /api/track?minutes=60&device=` | `Authorization: Bearer $VIEW_TOKEN` | JSON for the page |
+| `GET /api/latest`, `GET /api/track?minutes=60&device=` | `Authorization: Bearer $VIEW_TOKEN` | JSON for the page: the newest sample, and the samples with a fix (the map track) |
+| `GET /api/recent?minutes=60&limit=360&device=` | `Authorization: Bearer $VIEW_TOKEN` | every sample in the window, with or without a fix, oldest first, in the stored ingest format (`{device, t, receivedAt, loc?, activity?, transitions?, motion?, battery?, charging?}`). `limit` keeps the newest (max 5000), `minutes` max 7 days. Used for the motion charts. |
 | `GET /commands?device=`, `POST /commands/ack`, `POST /devices/fcm` | `INGEST_TOKEN` (device) | milestone 2: the phone fetches and acknowledges commands, and registers its FCM token |
 | `POST /commands`, `POST /tasks`, `GET /audit`, `GET /api/commands`, `GET /api/features` | `VIEW_TOKEN` (owner) | milestone 2: see below |
 
-The page loads Leaflet 1.9.4 from unpkg (pinned with SRI) and map tiles from OpenStreetMap. It sends a strict CSP and has no tracking.
+**The page** shows the track as a polyline with the latest position and its accuracy ring, the latest sample (activity, speed,
+accelerometer and gyroscope, battery, transitions), and charts of accel rms, gyro rms, speed and activity over the selected window.
+Gaps of more than a minute are drawn as gaps. A badge says **live** (last sample under 2.5 min old, i.e. within one upload batch),
+**stale** (under 15 min) or **offline**. It polls every 10 s while the tab is visible.
+It loads Leaflet 1.9.4 from unpkg (pinned with SRI) and map tiles from OpenStreetMap. The charts are plain SVG. It sends a strict CSP and has no tracking.
 
 **Docker:** `docker build -t phone-robot-server server && docker run -p 8080:8080 -e INGEST_TOKEN=... -v $PWD/data:/data phone-robot-server`
 
@@ -54,6 +59,19 @@ The page loads Leaflet 1.9.4 from unpkg (pinned with SRI) and map tiles from Ope
 2. Add a volume mounted at `/data`, and set `RAILWAY_RUN_UID=0` (Railway volumes are root-owned; the image otherwise runs as `node`).
 3. Set `INGEST_TOKEN` (and `VIEW_TOKEN`) as variables.
 4. Generate a domain. The app needs that `https://` URL.
+
+Or from the CLI, deploying straight from your checkout (no GitHub link needed):
+```bash
+cd server
+railway init                                  # or: railway link, for an existing project
+railway add --service phone-robot-server && railway service link phone-robot-server
+railway variable set INGEST_TOKEN=$(openssl rand -hex 24) VIEW_TOKEN=$(openssl rand -hex 24) RAILWAY_RUN_UID=0 --skip-deploys
+railway volume add --mount-path /data
+railway up                                    # uploads this folder; railway.json builds the Dockerfile
+railway domain                                # generates the https:// URL for the app
+```
+Read the tokens back with `railway variable list`: the app needs `INGEST_TOKEN`, the page needs `VIEW_TOKEN`.
+The server listens on `$PORT` (Railway sets it), and `/healthz` answers once it's listening.
 
 **Watch it with [DIS](https://github.com/fitzyracing1/DIS):**
 ```bash
